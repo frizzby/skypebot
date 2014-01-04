@@ -5,12 +5,19 @@ import os
 import logging
 import sys
 import io
-from collections import deque
+from collections import deque, namedtuple
+from itertools import ifilter, imap
 
 import Skype4Py
 from signal import *
 import csv
 
+
+class UrlRecord(namedtuple('UrlRecord', ['ts', 'msg_id', 'url'])):
+    @classmethod
+    def _make(cls, iterable, new=tuple.__new__, len=len):
+        ts, msg_id, url = iterable
+        return super(UrlRecord, cls)._make((float(ts), int(msg_id), url), new, len)
 
 
 DEBUG = True
@@ -28,21 +35,15 @@ OUTPUT_FILENAME='urls.csv'
 PID='bot.run'
 
 
-
-
-L = []
-
 def get_last_row(csv_filename):
     fsize = os.path.getsize(csv_filename)
     if fsize:
         _seek = min(50*1024, fsize)
         with open(csv_filename, 'rb') as f:
             f.seek(-_seek, io.SEEK_END)
-            return deque(csv.reader(f), 1)[0]
+            return UrlRecord._make(deque(csv.reader(f), 1)[0])
     else:
         return None, None, None
-
-
 
 
 class SkypeBot(object):
@@ -59,14 +60,18 @@ class SkypeBot(object):
         if status == Skype4Py.apiAttachAvailable:
             self.skype.Attach()
 
-        self.read_history()
+        for item in imap(UrlRecord._make, ifilter(lambda x: float(x[0])>=self.latest_ts, self.read_history())):
+            print item.ts, item.url
+
 
     def read_history(self):
-        with open(OUTPUT_FILENAME) as file:
-            for msg in self.skype.Chat(TARGET_CHAT_NAME).Messages:
-                match = TARGET_RE.findall(msg.Body)
-                if match:
-                    L.append((msg.Timestamp, match))
+        for msg in self.skype.Chat(TARGET_CHAT_NAME).Messages:
+            matches = TARGET_RE.findall(msg.Body)
+            if matches:
+                for match in matches:
+                    yield msg.Timestamp, msg.Id, match
+
+        print "FURA"
 
     #def MessageStatus(self, msg, status):
     #
@@ -110,5 +115,4 @@ if __name__ == "__main__":
     bot = SkypeBot()
 
     while True:
-        print L
         time.sleep(1.0)
