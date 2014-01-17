@@ -5,16 +5,27 @@ import os
 import logging
 import sys
 import io
-from collections import deque, namedtuple
+from collections import deque, namedtuple, Counter
 from itertools import ifilter, imap
 
 import Skype4Py
 from signal import *
 import csv
 import operator
+import itertools
+import functools
 
 
-class UrlRecord(namedtuple('UrlRecord', ['ts', 'msg_id', 'url'])):
+
+@functools.total_ordering
+class UrlRecord_ordering(object):
+    def __lt__(self, other):
+        return self[2] < other[2]
+    def __eq__(self, other):
+        return self[2] == other[2]
+
+
+class UrlRecord(UrlRecord_ordering, namedtuple('UrlRecord', ['ts', 'msg_id', 'url'])):
     @classmethod
     def _make(cls, iterable, new=tuple.__new__, len=len):
         ts, msg_id, url = iterable
@@ -22,6 +33,7 @@ class UrlRecord(namedtuple('UrlRecord', ['ts', 'msg_id', 'url'])):
 
     def __new__(cls, ts, msg_id, url):
         return super(UrlRecord, cls).__new__(cls, float(ts), int(msg_id), url.encode('utf-8'))
+
 
 
 
@@ -33,14 +45,15 @@ if DEBUG:
 
 log = logging.getLogger()
 
-TARGET_CHAT_NAME = '#vitus_by/$eug.kirillov;eb6e6e15b266d634'
-TARGET_RE = re.compile('https?:[^\s$]+\.(?:gif|jpe?g|png)', re.IGNORECASE)
-OUTPUT_FILENAME='urls.csv'
+TARGET_CHAT_NAME = '#lezeroq/$yan.davidovich;a36a2eb11aaf5d40'
+TARGET_RES = (re.compile('https?:[^\s$]+\.(?:gif|jpe?g|png)', re.IGNORECASE),
+              re.compile('http://coub.com/view/[\w]+', re.IGNORECASE))
+OUTPUT_FILENAME='cat_urls.csv'
 
 MAX_HISTORY_LOOKBACK = 500
 CSV_ESTIMATED_LINE_LENGTH = 500
 
-PID='bot.run'
+PID='cat_bot.run'
 
 
 
@@ -64,7 +77,7 @@ class SkypeBot(object):
         self.is_history_read = False
 
         self.skype = Skype4Py.Skype(Events=self)
-        self.skype.FriendlyName = "Skype Bot"
+        self.skype.FriendlyName = "Skype BotCat"
         self.skype.Attach()
 
 
@@ -94,6 +107,7 @@ class SkypeBot(object):
         if not self.is_history_read:
             self.is_history_read = True
             out = filter(lambda x: float(x[0]) >= self.latest_ts and x[2] not in self.history, self.read_skype_history())
+            out = dict((item.url, item) for item in out).values()
             out.sort(key=operator.attrgetter('ts'))
             if out:
                 write(out)
@@ -102,7 +116,7 @@ class SkypeBot(object):
     def read_skype_history(self):
         log.info("Reading skype history...")
         for msg in self.skype.Chat(TARGET_CHAT_NAME).Messages:
-            matches = TARGET_RE.findall(msg.Body)
+            matches = itertools.chain.from_iterable(map(operator.methodcaller("findall", msg.Body), TARGET_RES))
             if matches:
                 for match in matches:
                     yield UrlRecord(msg.Timestamp, msg.Id, unicode(match))
@@ -111,7 +125,7 @@ class SkypeBot(object):
         out = []
         if status == Skype4Py.cmsReceived:
             if msg.Chat.Type in (Skype4Py.chatTypeDialog, Skype4Py.chatTypeLegacyDialog, Skype4Py.chatTypeMultiChat) and msg.Chat.Name == TARGET_CHAT_NAME:
-                for match in TARGET_RE.findall(msg.Body):
+                for match in itertools.chain.from_iterable(map(operator.methodcaller("findall", msg.Body), TARGET_RES)):
                     print type(match)
                     if match not in self.history:
                         self.history.append(match)

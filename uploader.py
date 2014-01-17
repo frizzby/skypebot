@@ -45,7 +45,7 @@ class TumblrRestClient(pytumblr.TumblrRestClient):
             del params['data']
 
         pytumblr.validate_params(valid_parameters, params)
-        if not files:
+        if not files and not "body" in params:
             raise RuntimeError("No photos to post")
         if method == "get":
             return self.request.get(url, params)
@@ -56,10 +56,31 @@ class TumblrRestClient(pytumblr.TumblrRestClient):
 client = TumblrRestClient(
 )
 
-BLOG_NAME = ''
-OUTPUT_FILENAME = 'urls.csv'
-LATEST_FILE = 'latest.txt'
-TAGS = ['girls', 'boobs']
+
+TEMPLATES = {'coub': (r'<iframe src="http://coub.com/embed/%s?muted=false&amp;autostart=false&originalSize=false'
+                 r'&hideTopBar=false&noSiteButtons=false&startWithHD=false" allowfullscreen="true" '
+                 r'frameborder="0" width="640" height="360"></iframe>'),
+             'gif': '<img src="%s" alt=""/>'}
+
+
+def get_coub(url):
+    coub_id = url.strip("/").split("/")[-1]
+    return "create_text", {"format":"html", "body": TEMPLATES['coub'] % coub_id}
+
+def get_gif(url):
+    return "create_text", {"format":"html", "body": TEMPLATES['gif'] % url}
+
+def get_special(url):
+    if url.endswith(u'.gif'):
+        return (u'gif',) + get_gif(url)
+    elif url.startswith(u'http://coub.com/view/'):
+        return (u'coub',) + get_coub(url)
+    else:
+        return None
+
+OUTPUT_FILENAME = 'cat_urls.csv'
+LATEST_FILE = 'cat_latest.txt'
+TAGS = ['cat', 'dog', 'fun']
 
 
 
@@ -96,21 +117,32 @@ post_size = random.randint(1, 10)
 data = []
 tags = []
 for item in csv.reader(ifilter(None, follow(logfile))):
-    data.append(url_norm(item[2].decode('utf-8')))
-    tags.append(item[1])
-    if len(data) == post_size:
-        print "Posting %s photos" % post_size
-        response = client.create_photo(BLOG_NAME, data=data, tags=TAGS + tags)
+    url = url_norm(item[2].decode('utf-8'))
+    special = get_special(url)
+
+    if special:
+        print "Posting %s" % special[0]
+        response = getattr(client, special[1])(BLOG_NAME, tags=TAGS+[item[1]], **special[2])
         print response
         if "id" not in response or ('meta' in response and (response['meta']['status'] != 201)):
-            raise Exception("Bad response: %s" % response)
-        data = []
-        tags = []
-        post_size = random.randint(1, 10)
-        with open(LATEST_FILE, 'w') as f:
-            csv.writer(f).writerow(item)
+                raise Exception("Bad response: %s" % response)
+    else:
+        data.append(url_norm(item[2].decode('utf-8')))
+        tags.append(item[1])
+        if len(data) == post_size:
+            print "Posting %s photos" % post_size
+            response = client.create_photo(BLOG_NAME, data=data, tags=TAGS + tags)
+            print response
+            if "id" not in response or ('meta' in response and (response['meta']['status'] != 201)):
+                raise Exception("Bad response: %s" % response)
+            data = []
+            tags = []
+            post_size = random.randint(1, 10)
+            with open(LATEST_FILE, 'w') as f:
+                csv.writer(f).writerow(item)
 
-        wait = random.randint(45, 60*60)
-        print "=== Waiting %s sec. === " % wait
-        time.sleep(wait)
+            #wait = random.randint(45, 60*60)
+            wait = random.randint(4, 10)
+            print "=== Waiting %s sec. === " % wait
+            time.sleep(wait)
 
